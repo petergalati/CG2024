@@ -166,8 +166,7 @@ CanvasPoint getTexturePixelGivenProportion(CanvasPoint start, CanvasPoint end, f
     float new_y = start.texturePoint.y + dy * proportion;
 
     CanvasPoint new_texture_point;
-    new_texture_point.texturePoint.x = new_x;
-    new_texture_point.texturePoint.y = new_y;
+    new_texture_point.texturePoint = TexturePoint(new_x, new_y);
 
     return new_texture_point;
 }
@@ -184,33 +183,7 @@ float getProportionAlongLineGivenPoint(CanvasPoint start, CanvasPoint end, Canva
     return start_point_magnitude / start_end_magnitude;
 }
 
-void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle, CanvasTriangle texture_triangle, const TextureMap& texture_map) {
-
-//    link canvas triangle to texture triangle
-    canvas_triangle.v0().texturePoint.x = canvas_triangle.v0().x;
-    canvas_triangle.v0().texturePoint.y = canvas_triangle.v0().y;
-
-    canvas_triangle.v1().texturePoint.x = canvas_triangle.v1().x;
-    canvas_triangle.v1().texturePoint.y = canvas_triangle.v1().y;
-
-    canvas_triangle.v2().texturePoint.x = canvas_triangle.v2().x;
-    canvas_triangle.v2().texturePoint.y = canvas_triangle.v2().y;
-
-//    parse pixel stream to 2d vector
-    std::vector<std::vector<uint32_t>> texture_grid;
-    std::vector<uint32_t> texture_row;
-
-    std::vector<uint32_t> pixels = texture_map.pixels;
-
-    for (int i = 0; i < pixels.size(); i += 1) {
-        texture_row.push_back(pixels[i]);
-
-        if (texture_row.size() == texture_map.width) {
-            texture_grid.push_back(texture_row);
-            texture_row.clear();
-        }
-    }
-
+void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle, const TextureMap& texture_map) {
 //    sort canvas and find split point
     if (canvas_triangle.v1().y < canvas_triangle.v0().y) std::swap(canvas_triangle.v1(), canvas_triangle.v0());
     if (canvas_triangle.v2().y < canvas_triangle.v0().y) std::swap(canvas_triangle.v2(), canvas_triangle.v0());
@@ -219,66 +192,66 @@ void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle,
     float ratio_canvas = (canvas_triangle.v2().x - canvas_triangle.v0().x) / (canvas_triangle.v2().y - canvas_triangle.v0().y);
     float split_canvas_x = canvas_triangle.v0().x + ratio_canvas * (canvas_triangle.v1().y - canvas_triangle.v0().y);
 
-    CanvasPoint split_point_canvas = CanvasPoint(split_canvas_x, canvas_triangle.v1().y);
+    CanvasPoint split_point(split_canvas_x, canvas_triangle.v1().y);
 
 //    find proportion of split point along the entire side
-    float split_proportion = getProportionAlongLineGivenPoint(canvas_triangle.v0(), canvas_triangle.v2(), split_point_canvas);
-    CanvasPoint texture_split = getCanvasPixelGivenProportion(canvas_triangle.v0(), canvas_triangle.v2(), split_proportion);
+    float split_proportion = getProportionAlongLineGivenPoint(canvas_triangle.v0(), canvas_triangle.v2(), split_point);
 
-    split_point_canvas.texturePoint.x = texture_split.x;
-    split_point_canvas.texturePoint.y = texture_split.y;
+    CanvasPoint texture_split = getTexturePixelGivenProportion(canvas_triangle.v0(), canvas_triangle.v2(), split_proportion);
+
+    split_point.texturePoint = texture_split.texturePoint;
 
 
     for (int y = canvas_triangle.v0().y; y < canvas_triangle.v2().y; y++) {
         if (y <= canvas_triangle.v1().y) {
             float ratio_a = (canvas_triangle.v1().x - canvas_triangle.v0().x) / (canvas_triangle.v1().y - canvas_triangle.v0().y);
             float x_a = canvas_triangle.v0().x + (y - canvas_triangle.v0().y) * ratio_a;
-            CanvasPoint current_point_a = CanvasPoint(x_a, y);
+
+            CanvasPoint current_point_a(x_a, y);
             float proportion_along_a = getProportionAlongLineGivenPoint(canvas_triangle.v0(), canvas_triangle.v1(), current_point_a);
             CanvasPoint point_on_texture_a = getTexturePixelGivenProportion(canvas_triangle.v0(), canvas_triangle.v1(), proportion_along_a);
 
             float ratio_b = (split_canvas_x - canvas_triangle.v0().x) / (canvas_triangle.v1().y - canvas_triangle.v0().y);
             float x_b = canvas_triangle.v0().x + (y - canvas_triangle.v0().y) * ratio_b;
-            CanvasPoint current_point_b = CanvasPoint(x_b, y);
-            float proportion_along_b = getProportionAlongLineGivenPoint(canvas_triangle.v0(), split_point_canvas, current_point_b);
-            CanvasPoint point_on_texture_b = getTexturePixelGivenProportion(canvas_triangle.v0(), split_point_canvas, proportion_along_b);
+
+            CanvasPoint current_point_b(x_b, y);
+            float proportion_along_b = getProportionAlongLineGivenPoint(canvas_triangle.v0(), split_point, current_point_b);
+            CanvasPoint point_on_texture_b = getTexturePixelGivenProportion(canvas_triangle.v0(), split_point, proportion_along_b);
 
 //          draw horizontal scanline
-            for (int x = x_a; x < x_b; x++) {
-                float proportion_along_scan_line = (x - x_a) / (x_b - x_a); // Correct scanline proportion calculation
-                CanvasPoint texture_colour_location = getTexturePixelGivenProportion(point_on_texture_a, point_on_texture_b, proportion_along_scan_line);
-                uint32_t texture_colour = texture_grid[texture_colour_location.texturePoint.y][texture_colour_location.texturePoint.x];
+            for (int x = x_a; x < int(x_b); x++) {
+                float proportion = (x - x_a) / (x_b - x_a);
+                CanvasPoint texture_point = getTexturePixelGivenProportion(point_on_texture_a, point_on_texture_b, proportion);
 
-                window.setPixelColour(round(x), round(y), texture_colour);
+                uint32_t texture_colour = texture_map.pixels[int(texture_point.texturePoint.y) * texture_map.width + int(texture_point.texturePoint.x)];
+                window.setPixelColour(x, y, texture_colour);
             }
 
         } else {
             float ratio_a = (canvas_triangle.v2().x - canvas_triangle.v1().x) / (canvas_triangle.v2().y - canvas_triangle.v1().y);
             float x_a = canvas_triangle.v1().x + (y - canvas_triangle.v1().y) * ratio_a;
             CanvasPoint current_point_a = CanvasPoint(x_a, y);
+
             float proportion_along_a = getProportionAlongLineGivenPoint(canvas_triangle.v1(), canvas_triangle.v2(), current_point_a);
             CanvasPoint point_on_texture_a = getTexturePixelGivenProportion(canvas_triangle.v1(), canvas_triangle.v2(), proportion_along_a);
 
             float ratio_b = (canvas_triangle.v2().x - split_canvas_x) / (canvas_triangle.v2().y - canvas_triangle.v1().y);
             float x_b = split_canvas_x + (y - canvas_triangle.v1().y) * ratio_b;
             CanvasPoint current_point_b = CanvasPoint(x_b, y);
-            float proportion_along_b = getProportionAlongLineGivenPoint(split_point_canvas, canvas_triangle.v2(), current_point_b);
-            CanvasPoint point_on_texture_b = getTexturePixelGivenProportion(split_point_canvas, canvas_triangle.v2(), proportion_along_b);
+            float proportion_along_b = getProportionAlongLineGivenPoint(split_point, canvas_triangle.v2(), current_point_b);
+            CanvasPoint point_on_texture_b = getTexturePixelGivenProportion(split_point, canvas_triangle.v2(), proportion_along_b);
 
 //          draw horizontal scanline
 
-            for (int x = x_a; x < x_b; x++) {
-                float proportion_along_scan_line = (x - x_a) / (x_b - x_a); // Correct scanline proportion calculation
-                CanvasPoint texture_colour_location = getTexturePixelGivenProportion(point_on_texture_a, point_on_texture_b, proportion_along_scan_line);
-                uint32_t texture_colour = texture_grid[texture_colour_location.texturePoint.y][texture_colour_location.texturePoint.x];
+            for (int x = x_a; x < int(x_b); x++) {
+                float proportion = (x - x_a) / (x_b - x_a);
+                CanvasPoint texture_point = getTexturePixelGivenProportion(point_on_texture_a, point_on_texture_b, proportion);
 
-                window.setPixelColour(round(x), round(y), texture_colour);
+                uint32_t texture_colour = texture_map.pixels[int(texture_point.texturePoint.y) * texture_map.width + int(texture_point.texturePoint.x)];
+                window.setPixelColour(x, y, texture_colour);
             }
         }
     }
-
-
-
 
 }
 
@@ -432,18 +405,19 @@ int main(int argc, char *argv[]) {
 
 
         CanvasPoint canvas_v0 = CanvasPoint(160, 10);
-        CanvasPoint canvas_v1 = CanvasPoint(300, 230);
-        CanvasPoint canvas_v2 = CanvasPoint(10, 150);
-        CanvasTriangle canvas_triangle = CanvasTriangle(canvas_v0, canvas_v1, canvas_v2);
+        canvas_v0.texturePoint = TexturePoint(195, 5);
 
-        CanvasPoint texture_v0 = CanvasPoint(195, 5);
-        CanvasPoint texture_v1 = CanvasPoint(395, 380);
-        CanvasPoint texture_v2 = CanvasPoint(65, 330);
-        CanvasTriangle texture_triangle = CanvasTriangle(texture_v0, texture_v1, texture_v2);
+        CanvasPoint canvas_v1 = CanvasPoint(300, 230);
+        canvas_v1.texturePoint = TexturePoint(395, 380);
+
+        CanvasPoint canvas_v2 = CanvasPoint(10, 150);
+        canvas_v2.texturePoint = TexturePoint(65, 330);
+
+        CanvasTriangle canvas_triangle = CanvasTriangle(canvas_v0, canvas_v1, canvas_v2);
 
         TextureMap texture_map = TextureMap("texture.ppm");
 
-        drawTexturedTriangle(window, canvas_triangle, texture_triangle, texture_map);
+        drawTexturedTriangle(window, canvas_triangle, texture_map);
         drawStrokedTriangle(window, canvas_triangle, Colour(255, 255, 255));
 
 
