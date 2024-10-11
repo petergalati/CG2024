@@ -3,10 +3,12 @@
 #include <Colour.h>
 #include <DrawingWindow.h>
 #include <TextureMap.h>
+#include <ModelTriangle.h>
 #include <Utils.h>
 #include <fstream>
 #include <vector>
 #include <glm/glm.hpp>
+#include <unordered_map>
 
 #define WIDTH 320
 #define HEIGHT 240
@@ -183,7 +185,9 @@ float getProportionAlongLineGivenPoint(CanvasPoint start, CanvasPoint end, Canva
     return start_point_magnitude / start_end_magnitude;
 }
 
-void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle, const TextureMap& texture_map) {
+void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle, const std::string& file_path) {
+    TextureMap texture_map = TextureMap(file_path);
+
 //    sort canvas and find split point
     if (canvas_triangle.v1().y < canvas_triangle.v0().y) std::swap(canvas_triangle.v1(), canvas_triangle.v0());
     if (canvas_triangle.v2().y < canvas_triangle.v0().y) std::swap(canvas_triangle.v2(), canvas_triangle.v0());
@@ -255,6 +259,88 @@ void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle,
 
 }
 
+std::unordered_map<std::string, Colour> parsePaletteMtlFile(const std::string& file_name) {
+
+    std::unordered_map<std::string, Colour> parsed_palette;
+
+    std::ifstream input_stream(file_name);
+    std::string next_line;
+
+
+    while (std::getline(input_stream, next_line)) {
+        if (!next_line.empty()) {
+            std::vector<std::string> parsed_line = split(next_line, ' ');
+            if (parsed_line[0][0] == 'n') { //n for newmtl
+                std::string colour_key = parsed_line[1];
+
+                std::getline(input_stream, next_line);
+                std::vector<std::string> parsed_rgb_line = split(next_line, ' ');
+
+                int red = int(round(std::stof(parsed_rgb_line[1]) * 255));
+                int green = int(round(std::stof(parsed_rgb_line[2]) * 255));
+                int blue = int(round(std::stof(parsed_rgb_line[3]) * 255));
+
+                Colour colour_value(red, green, blue);
+
+                parsed_palette[colour_key] = colour_value;
+            }
+        }
+    }
+
+    return parsed_palette;
+}
+
+std::vector<ModelTriangle> parseModelObjFile(const std::string& file_name, float scaling_factor) {
+    std::unordered_map<std::string, Colour> parsed_palette = parsePaletteMtlFile("cornell-box.mtl");
+
+    std::vector<ModelTriangle> parsed_model_triangles;
+
+    std::vector<glm::vec3> vertex_tracker;
+
+    std::ifstream input_stream(file_name);
+    std::string next_line;
+
+    std::string current_colour;
+
+    while (std::getline(input_stream, next_line)) {
+        if (!next_line.empty()) {
+            std::vector<std::string> parsed_line = split(next_line, ' ');
+
+            if (next_line.at(0) == 'u') {
+                current_colour = parsed_line[1];
+
+            } else if (next_line.at(0) == 'v') {
+                float x = std::stof((parsed_line[1])) * scaling_factor;
+                float y = std::stof((parsed_line[2])) * scaling_factor;
+                float z = std::stof((parsed_line[3])) * scaling_factor;
+
+                glm::vec3 next_vertex(x, y, z);
+                vertex_tracker.push_back(next_vertex);
+
+            } else if (next_line.at(0) == 'f') {
+                int v0_index = std::stoi(split(parsed_line[1], '/')[0]) - 1;
+                int v1_index = std::stoi(split(parsed_line[2], '/')[0]) - 1;
+                int v2_index = std::stoi(split(parsed_line[3], '/')[0]) - 1;
+
+                ModelTriangle next_triangle(vertex_tracker[v0_index], vertex_tracker[v1_index],vertex_tracker[v2_index], parsed_palette[current_colour]);
+
+                parsed_model_triangles.push_back(next_triangle);
+
+            }
+        }
+    }
+    return parsed_model_triangles;
+}
+
+CanvasPoint projectVertexOntoCanvasPoint(glm::vec3 camera_position, float focal_length, glm::vec3 vertex_position) {
+    glm::vec3 camera_space_vertex = vertex_position - camera_position;
+
+    float u = -focal_length * (camera_space_vertex.x / camera_space_vertex.z) * 160 + WIDTH / 2;
+    float v = focal_length * (camera_space_vertex.y / camera_space_vertex.z) * 160 + HEIGHT / 2;
+
+    return {u, v};
+}
+
 
 void handleEvent(SDL_Event event, DrawingWindow &window) {
     if (event.type == SDL_KEYDOWN) {
@@ -268,6 +354,36 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
     }
 }
 
+int main(int argc, char *argv[]) {
+
+    DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
+
+    SDL_Event event;
+
+    std::vector<ModelTriangle> parsed_triangles = parseModelObjFile("cornell-box.obj", 0.35);
+
+    while (true) {
+        if (window.pollForInputEvents(event)) handleEvent(event, window);
+
+        for (const auto & parsed_triangle : parsed_triangles) {
+            std::vector<CanvasPoint> canvas_points;
+
+            for (const auto & vertex : parsed_triangle.vertices) {
+                CanvasPoint vertex_point = projectVertexOntoCanvasPoint(glm::vec3(0.0, 0.0, 4.0), 2, vertex);
+                uint32_t packed_colour = (255 << 24) + (255 << 16) + (255 << 8) + 255;
+
+                window.setPixelColour(int(vertex_point.x), int(vertex_point.y), packed_colour);
+
+                CanvasPoint canvas_point(vertex_point.x, vertex_point.y);
+                canvas_points.push_back(canvas_point);
+            }
+            CanvasTriangle canvas_triangle(canvas_points[0], canvas_points[1], canvas_points[2]);
+            drawStrokedTriangle(window, canvas_triangle, Colour(255, 255, 255));
+        }
+
+        window.renderFrame();
+    }
+}
 
 //int main(int argc, char *argv[]) {
 //
@@ -394,33 +510,31 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 //}
 
 // draw textured triangle
-int main(int argc, char *argv[]) {
-
-    DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
-
-    SDL_Event event;
-    while (true) {
-        if (window.pollForInputEvents(event)) handleEvent(event, window);
-
-
-
-        CanvasPoint canvas_v0 = CanvasPoint(160, 10);
-        canvas_v0.texturePoint = TexturePoint(195, 5);
-
-        CanvasPoint canvas_v1 = CanvasPoint(300, 230);
-        canvas_v1.texturePoint = TexturePoint(395, 380);
-
-        CanvasPoint canvas_v2 = CanvasPoint(10, 150);
-        canvas_v2.texturePoint = TexturePoint(65, 330);
-
-        CanvasTriangle canvas_triangle = CanvasTriangle(canvas_v0, canvas_v1, canvas_v2);
-
-        TextureMap texture_map = TextureMap("texture.ppm");
-
-        drawTexturedTriangle(window, canvas_triangle, texture_map);
-        drawStrokedTriangle(window, canvas_triangle, Colour(255, 255, 255));
-
-
-        window.renderFrame();
-    }
-}
+//int main(int argc, char *argv[]) {
+//
+//    DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
+//
+//    SDL_Event event;
+//    while (true) {
+//        if (window.pollForInputEvents(event)) handleEvent(event, window);
+//
+//
+//
+//        CanvasPoint canvas_v0 = CanvasPoint(160, 10);
+//        canvas_v0.texturePoint = TexturePoint(195, 5);
+//
+//        CanvasPoint canvas_v1 = CanvasPoint(300, 230);
+//        canvas_v1.texturePoint = TexturePoint(395, 380);
+//
+//        CanvasPoint canvas_v2 = CanvasPoint(10, 150);
+//        canvas_v2.texturePoint = TexturePoint(65, 330);
+//
+//        CanvasTriangle canvas_triangle = CanvasTriangle(canvas_v0, canvas_v1, canvas_v2);
+//
+//        drawTexturedTriangle(window, canvas_triangle, "texture.ppm");
+//        drawStrokedTriangle(window, canvas_triangle, Colour(255, 255, 255));
+//
+//
+//        window.renderFrame();
+//    }
+//}
