@@ -8,6 +8,8 @@
 #include <fstream>
 #include <vector>
 #include <glm/glm.hpp>
+#include <glm/gtx/string_cast.hpp>
+
 #include <unordered_map>
 
 #define WIDTH 320
@@ -91,7 +93,7 @@ void drawColour(DrawingWindow &window) {
     }
 }
 
-void drawLine(DrawingWindow &window, CanvasPoint from, CanvasPoint to, Colour colour) {
+void drawLine(DrawingWindow &window, CanvasPoint from, CanvasPoint to, const Colour& colour) {
     float dx = to.x - from.x;
     float dy = to.y - from.y;
 
@@ -102,10 +104,36 @@ void drawLine(DrawingWindow &window, CanvasPoint from, CanvasPoint to, Colour co
 
     uint32_t packed_colour = (255 << 24) + (int(colour.red) << 16) + (int(colour.green) << 8) + int(colour.blue);
 
-    for (float i = 0.0; i <= steps; i++) {
+    for (int i = 0; i <= steps; i++) {
         float x = from.x + x_step_size * i;
         float y = from.y + y_step_size * i;
         window.setPixelColour(round(x), round(y), packed_colour);
+    }
+}
+
+void drawDepthLine(DrawingWindow &window, CanvasPoint from, CanvasPoint to, const Colour& colour, std::vector<std::vector<float>>& depth_vector) {
+    float dx = to.x - from.x;
+    float dy = to.y - from.y;
+    float d_depth = to.depth - from.depth;
+
+//    not sure why this works, but without ceil lines look odd
+    float steps = ceil(fmax(abs(dx), abs(dy)));
+
+    float x_step_size = dx / steps;
+    float y_step_size = dy / steps;
+    float depth_step_size = d_depth / steps;
+
+    uint32_t packed_colour = (255 << 24) + (int(colour.red) << 16) + (int(colour.green) << 8) + int(colour.blue);
+
+    for (int i = 0; i <= steps; i++) {
+        float current_depth = from.depth + depth_step_size * i;
+        float x = round(from.x + x_step_size * i);
+        float y = round(from.y + y_step_size * i);
+
+        if (current_depth > depth_vector[y][x]) {
+            window.setPixelColour(x, y, packed_colour);
+            depth_vector[y][x] = current_depth;
+        }
     }
 }
 
@@ -113,41 +141,6 @@ void drawStrokedTriangle(DrawingWindow &window, CanvasTriangle triangle, Colour 
     drawLine(window, triangle.v0(), triangle.v1(), colour);
     drawLine(window, triangle.v1(), triangle.v2(), colour);
     drawLine(window, triangle.v0(), triangle.v2(), colour);
-}
-
-void drawFilledTriangle(DrawingWindow &window, CanvasTriangle triangle, Colour colour) {
-    if (triangle.v1().y < triangle.v0().y) std::swap(triangle.v1(), triangle.v0());
-    if (triangle.v2().y < triangle.v0().y) std::swap(triangle.v2(), triangle.v0());
-    if (triangle.v2().y < triangle.v1().y) std::swap(triangle.v2(), triangle.v1());
-
-    float ratio = (triangle.v2().x - triangle.v0().x) / (triangle.v2().y - triangle.v0().y);
-    float split_point_x = triangle.v0().x + ratio * (triangle.v1().y - triangle.v0().y);
-
-    for (int y = triangle.v0().y; y < triangle.v2().y; y++) {
-        if (y <= triangle.v1().y) {
-            float ratio_a = (triangle.v1().x - triangle.v0().x) / (triangle.v1().y - triangle.v0().y);
-            float x_a = triangle.v0().x + (y - triangle.v0().y) * ratio_a;
-
-            float ratio_b = (split_point_x - triangle.v0().x) / (triangle.v1().y - triangle.v0().y);
-            float x_b = triangle.v0().x + (y - triangle.v0().y) * ratio_b;
-
-            CanvasPoint from_a = CanvasPoint(x_a, y);
-            CanvasPoint from_b = CanvasPoint(x_b, y);
-
-            drawLine(window, from_a, from_b, colour);
-        } else {
-            float ratio_a = (triangle.v2().x - triangle.v1().x) / (triangle.v2().y - triangle.v1().y);
-            float x_a = triangle.v1().x + (y - triangle.v1().y) * ratio_a;
-
-            float ratio_b = (triangle.v2().x - split_point_x) / (triangle.v2().y - triangle.v1().y);
-            float x_b = split_point_x + (y - triangle.v1().y) * ratio_b;
-
-            CanvasPoint from_a = CanvasPoint(x_a, y);
-            CanvasPoint from_b = CanvasPoint(x_b, y);
-
-            drawLine(window, from_a, from_b, colour);
-        }
-    }
 }
 
 CanvasPoint getCanvasPixelGivenProportion(CanvasPoint start, CanvasPoint end, float proportion) {
@@ -184,6 +177,52 @@ float getProportionAlongLineGivenPoint(CanvasPoint start, CanvasPoint end, Canva
 
     return start_point_magnitude / start_end_magnitude;
 }
+
+void drawFilledTriangle(DrawingWindow &window, CanvasTriangle triangle, const Colour& colour, std::vector<std::vector<float>>& depth_vector) {
+    if (triangle.v1().y < triangle.v0().y) std::swap(triangle.v1(), triangle.v0());
+    if (triangle.v2().y < triangle.v0().y) std::swap(triangle.v2(), triangle.v0());
+    if (triangle.v2().y < triangle.v1().y) std::swap(triangle.v2(), triangle.v1());
+
+    float proportion_split = (triangle.v1().y - triangle.v0().y) / (triangle.v2().y - triangle.v0().y);
+    float split_point_x = triangle.v0().x + proportion_split * (triangle.v2().x - triangle.v0().x);
+    float split_point_depth = triangle.v0().depth + proportion_split * (triangle.v2().depth - triangle.v0().depth);
+    CanvasPoint split_point(split_point_x, triangle.v1().y, split_point_depth);
+
+    for (int y = int(ceil(triangle.v0().y)); y <= int(floor(triangle.v1().y)); y++) {
+        float proportion_a = (y - triangle.v0().y) / (triangle.v1().y - triangle.v0().y);
+        float x_a = triangle.v0().x + proportion_a * (triangle.v1().x - triangle.v0().x);
+        float depth_a = triangle.v0().depth + proportion_a * (triangle.v1().depth - triangle.v0().depth);
+
+        float proportion_b = (y - triangle.v0().y) / (split_point.y - triangle.v0().y);
+        float x_b = triangle.v0().x + proportion_b * (split_point.x - triangle.v0().x);
+        float depth_b = triangle.v0().depth + proportion_b * (split_point.depth - triangle.v0().depth);
+
+        CanvasPoint from_a(x_a, y, depth_a);
+        CanvasPoint from_b(x_b, y, depth_b);
+
+        if (from_a.x > from_b.x) std::swap(from_a, from_b);
+
+        drawDepthLine(window, from_a, from_b, colour, depth_vector);
+    }
+
+    for (int y = int(ceil(triangle.v1().y)); y <= int(floor(triangle.v2().y)); y++) {
+        float proportion_a = (y - triangle.v1().y) / (triangle.v2().y - triangle.v1().y);
+        float x_a = triangle.v1().x + proportion_a * (triangle.v2().x - triangle.v1().x);
+        float depth_a = triangle.v1().depth + proportion_a * (triangle.v2().depth - triangle.v1().depth);
+
+        float proportion_b = (y - split_point.y) / (triangle.v2().y - split_point.y);
+        float x_b = split_point.x + proportion_b * (triangle.v2().x - split_point.x);
+        float depth_b = split_point.depth + proportion_b * (triangle.v2().depth - split_point.depth);
+
+        CanvasPoint from_a(x_a, y, depth_a);
+        CanvasPoint from_b(x_b, y, depth_b);
+
+        if (from_a.x > from_b.x) std::swap(from_a, from_b);
+
+        drawDepthLine(window, from_a, from_b, colour, depth_vector);
+    }
+}
+
 
 void drawTexturedTriangle(DrawingWindow &window, CanvasTriangle canvas_triangle, const std::string& file_path) {
     TextureMap texture_map = TextureMap(file_path);
@@ -334,11 +373,31 @@ std::vector<ModelTriangle> parseModelObjFile(const std::string& file_name, float
 
 CanvasPoint projectVertexOntoCanvasPoint(glm::vec3 camera_position, float focal_length, glm::vec3 vertex_position) {
     glm::vec3 camera_space_vertex = vertex_position - camera_position;
-
+// Negate u to correct for coordinate system mismatch (flips the image along x-axis)
     float u = -focal_length * (camera_space_vertex.x / camera_space_vertex.z) * 160 + WIDTH / 2;
     float v = focal_length * (camera_space_vertex.y / camera_space_vertex.z) * 160 + HEIGHT / 2;
+    float depth = -1 / camera_space_vertex.z;
 
-    return {u, v};
+    CanvasPoint projected_vertex(u, v);
+    projected_vertex.depth = depth;
+
+    return projected_vertex;
+}
+
+void drawScene(DrawingWindow &window, const std::vector<ModelTriangle>& parsed_triangles) {
+    std::vector<std::vector<float>> depth_vector(HEIGHT, std::vector<float>(WIDTH, 0.0));
+
+    for (const auto & parsed_triangle : parsed_triangles) {
+        std::vector<CanvasPoint> canvas_points;
+
+        for (const auto & vertex : parsed_triangle.vertices) {
+            canvas_points.push_back(projectVertexOntoCanvasPoint(glm::vec3(0.0, 0.0, 4.0), 2, vertex));
+        }
+
+        CanvasTriangle canvas_triangle(canvas_points[0], canvas_points[1], canvas_points[2]);
+        drawFilledTriangle(window, canvas_triangle, parsed_triangle.colour, depth_vector);
+    }
+
 }
 
 
@@ -365,21 +424,7 @@ int main(int argc, char *argv[]) {
     while (true) {
         if (window.pollForInputEvents(event)) handleEvent(event, window);
 
-        for (const auto & parsed_triangle : parsed_triangles) {
-            std::vector<CanvasPoint> canvas_points;
-
-            for (const auto & vertex : parsed_triangle.vertices) {
-                CanvasPoint vertex_point = projectVertexOntoCanvasPoint(glm::vec3(0.0, 0.0, 4.0), 2, vertex);
-                uint32_t packed_colour = (255 << 24) + (255 << 16) + (255 << 8) + 255;
-
-                window.setPixelColour(int(vertex_point.x), int(vertex_point.y), packed_colour);
-
-                CanvasPoint canvas_point(vertex_point.x, vertex_point.y);
-                canvas_points.push_back(canvas_point);
-            }
-            CanvasTriangle canvas_triangle(canvas_points[0], canvas_points[1], canvas_points[2]);
-            drawStrokedTriangle(window, canvas_triangle, Colour(255, 255, 255));
-        }
+        drawScene(window, parsed_triangles);
 
         window.renderFrame();
     }
