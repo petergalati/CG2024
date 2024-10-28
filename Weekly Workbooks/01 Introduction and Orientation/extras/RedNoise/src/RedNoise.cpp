@@ -15,6 +15,10 @@
 #define WIDTH 320
 #define HEIGHT 240
 
+glm::vec3 g_camera_position(0.0, 0.0, 4.0);
+glm::mat3 g_camera_orientation = glm::mat3(1.0);
+
+
 void draw(DrawingWindow &window) {
     window.clearPixels();
     for (size_t y = 0; y < window.height; y++) {
@@ -371,12 +375,13 @@ std::vector<ModelTriangle> parseModelObjFile(const std::string& file_name, float
     return parsed_model_triangles;
 }
 
-CanvasPoint projectVertexOntoCanvasPoint(glm::vec3 camera_position, float focal_length, glm::vec3 vertex_position) {
-    glm::vec3 camera_space_vertex = vertex_position - camera_position;
-// Negate u to correct for coordinate system mismatch (flips the image along x-axis)
-    float u = -focal_length * (camera_space_vertex.x / camera_space_vertex.z) * 160 + WIDTH / 2;
-    float v = focal_length * (camera_space_vertex.y / camera_space_vertex.z) * 160 + HEIGHT / 2;
-    float depth = -1 / camera_space_vertex.z;
+CanvasPoint projectVertexOntoCanvasPoint(glm::vec3 camera_position, float focal_length, glm::vec3 vertex_position, glm::mat3 camera_orientation) {
+    glm::vec3 camera_to_vertex = vertex_position - camera_position;
+    glm::vec3 adjusted_vector = camera_to_vertex * camera_orientation;
+
+    float u = -focal_length * (adjusted_vector.x / adjusted_vector.z) * 160 + WIDTH / 2;
+    float v = focal_length * (adjusted_vector.y / adjusted_vector.z) * 160 + HEIGHT / 2;
+    float depth = -1 / adjusted_vector.z;
 
     CanvasPoint projected_vertex(u, v);
     projected_vertex.depth = depth;
@@ -385,13 +390,14 @@ CanvasPoint projectVertexOntoCanvasPoint(glm::vec3 camera_position, float focal_
 }
 
 void drawScene(DrawingWindow &window, const std::vector<ModelTriangle>& parsed_triangles) {
+    window.clearPixels();
     std::vector<std::vector<float>> depth_vector(HEIGHT, std::vector<float>(WIDTH, 0.0));
 
     for (const auto & parsed_triangle : parsed_triangles) {
         std::vector<CanvasPoint> canvas_points;
 
         for (const auto & vertex : parsed_triangle.vertices) {
-            canvas_points.push_back(projectVertexOntoCanvasPoint(glm::vec3(0.0, 0.0, 4.0), 2, vertex));
+            canvas_points.push_back(projectVertexOntoCanvasPoint(g_camera_position, 2, vertex, g_camera_orientation));
         }
 
         CanvasTriangle canvas_triangle(canvas_points[0], canvas_points[1], canvas_points[2]);
@@ -403,10 +409,96 @@ void drawScene(DrawingWindow &window, const std::vector<ModelTriangle>& parsed_t
 
 void handleEvent(SDL_Event event, DrawingWindow &window) {
     if (event.type == SDL_KEYDOWN) {
-        if (event.key.keysym.sym == SDLK_LEFT) std::cout << "LEFT" << std::endl;
-        else if (event.key.keysym.sym == SDLK_RIGHT) std::cout << "RIGHT" << std::endl;
-        else if (event.key.keysym.sym == SDLK_UP) std::cout << "UP" << std::endl;
-        else if (event.key.keysym.sym == SDLK_DOWN) std::cout << "DOWN" << std::endl;
+        switch (event.key.keysym.sym) {
+            case SDLK_LEFT:
+                g_camera_position.x += 0.1;
+                std::cout << "LEFT" << std::endl;
+                break;
+
+            case SDLK_RIGHT:
+                g_camera_position.x -= 0.1;
+                std::cout << "RIGHT" << std::endl;
+                break;
+
+            case SDLK_UP:
+                g_camera_position.y -= 0.1;
+                std::cout << "UP" << std::endl;
+                break;
+
+            case SDLK_DOWN:
+                g_camera_position.y += 0.1;
+                std::cout << "DOWN" << std::endl;
+                break;
+
+            case SDLK_i:
+                g_camera_position.z -= 0.1;
+                std::cout << "IN" << std::endl;
+                break;
+
+            case SDLK_o:
+                g_camera_position.z += 0.1;
+                std::cout << "OUT" << std::endl;
+                break;
+
+            case SDLK_z:
+            {
+                float angle = glm::radians(1.0);
+                glm::mat3 rotation_matrix = glm::mat3(
+                        glm::vec3(1, 0, 0),
+                        glm::vec3(0, cos(angle), -sin(angle)),
+                        glm::vec3(0, sin(angle), cos(angle))
+                );
+                g_camera_orientation = rotation_matrix * g_camera_orientation;
+                std::cout << "ROTATE UP X" << std::endl;
+
+                break;
+            }
+
+            case SDLK_c:
+            {
+                float angle = glm::radians(-1.0);
+                glm::mat3 rotation_matrix = glm::mat3(
+                        glm::vec3(1, 0, 0),
+                        glm::vec3(0, cos(angle), -sin(angle)),
+                        glm::vec3(0, sin(angle), cos(angle))
+                );
+                g_camera_orientation = rotation_matrix * g_camera_orientation;
+                std::cout << "ROTATE DOWN X" << std::endl;
+
+                break;
+            }
+
+            case SDLK_t:
+            {
+                float angle = glm::radians(1.0);
+                glm::mat3 rotation_matrix = glm::mat3(
+                        glm::vec3(cos(angle), 0, sin(angle)),
+                        glm::vec3(0, 1, 0),
+                        glm::vec3(-sin(angle), 0, cos(angle))
+                );
+                g_camera_orientation = rotation_matrix * g_camera_orientation;
+                std::cout << "ROTATE LEFT Y" << std::endl;
+
+                break;
+            }
+
+            case SDLK_u:
+            {
+                float angle = glm::radians(-1.0);
+                glm::mat3 rotation_matrix = glm::mat3(
+                        glm::vec3(cos(angle), 0, sin(angle)),
+                        glm::vec3(0, 1, 0),
+                        glm::vec3(-sin(angle), 0, cos(angle))
+                );
+                g_camera_orientation = rotation_matrix * g_camera_orientation;
+                std::cout << "ROTATE RIGHT Y" << std::endl;
+
+                break;
+            }
+
+            default:
+                break;
+        }
     } else if (event.type == SDL_MOUSEBUTTONDOWN) {
         window.savePPM("output.ppm");
         window.saveBMP("output.bmp");
